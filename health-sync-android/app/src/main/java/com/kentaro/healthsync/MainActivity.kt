@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -77,8 +78,10 @@ private fun SettingsScreen() {
     var status by remember { mutableStateOf(settings.lastLog) }
     var busy by remember { mutableStateOf(false) }
     var grantedCount by remember { mutableStateOf(0) }
+    var hcError by remember { mutableStateOf("") }
+    var crashLog by remember { mutableStateOf(settings.crashLog) }
 
-    val sdkStatus = remember { HealthConnectClient.getSdkStatus(context) }
+    val sdkStatus = remember { runCatching { HealthConnectClient.getSdkStatus(context) }.getOrDefault(HealthConnectClient.SDK_UNAVAILABLE) }
     val hcAvailable = sdkStatus == HealthConnectClient.SDK_AVAILABLE
 
     fun wantedPermissions(): Set<String> =
@@ -87,8 +90,14 @@ private fun SettingsScreen() {
 
     suspend fun refreshGranted() {
         if (!hcAvailable) return
-        val granted = HealthConnectClient.getOrCreate(context).permissionController.getGrantedPermissions()
-        grantedCount = wantedPermissions().count { it in granted }
+        // ここで例外が出てもアプリを落とさず、画面に理由を出す
+        try {
+            val granted = HealthConnectClient.getOrCreate(context).permissionController.getGrantedPermissions()
+            grantedCount = wantedPermissions().count { it in granted }
+            hcError = ""
+        } catch (e: Exception) {
+            hcError = "ヘルスコネクトの確認に失敗: ${e.javaClass.simpleName}: ${e.message}"
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -137,18 +146,36 @@ private fun SettingsScreen() {
     ) {
         Text("ヘルスコネクト → Notion", style = MaterialTheme.typography.headlineSmall)
 
+        if (crashLog.isNotEmpty()) {
+            Section("前回アプリが異常終了しました") {
+                Text("下の内容を長押しでコピーして、開発者（Claude）に送ってください。", style = MaterialTheme.typography.bodySmall)
+                SelectionContainer { Text(crashLog, style = MaterialTheme.typography.bodySmall) }
+                OutlinedButton(onClick = { settings.crashLog = ""; crashLog = "" }) { Text("閉じる") }
+            }
+        }
+
         // 1. ヘルスコネクト
         Section("1. ヘルスコネクト") {
             if (!hcAvailable) {
                 Text("ヘルスコネクトが使えません。Playストアからインストール/更新してください。")
                 OutlinedButton(onClick = {
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.apps.healthdata"))
-                    )
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.apps.healthdata"))
+                        )
+                    }
                 }) { Text("Playストアを開く") }
             } else {
                 Text("許可済み: $grantedCount / ${wantedPermissions().size}")
-                Button(onClick = { save(); permissionLauncher.launch(wantedPermissions()) }) { Text("読み取りを許可する") }
+                if (hcError.isNotEmpty()) SelectionContainer { Text(hcError, color = MaterialTheme.colorScheme.error) }
+                Button(onClick = {
+                    save()
+                    try {
+                        permissionLauncher.launch(wantedPermissions())
+                    } catch (e: Exception) {
+                        hcError = "許可画面を開けません: ${e.javaClass.simpleName}: ${e.message}"
+                    }
+                }) { Text("読み取りを許可する") }
             }
         }
 

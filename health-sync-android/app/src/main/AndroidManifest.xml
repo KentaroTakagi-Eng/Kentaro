@@ -19,6 +19,7 @@
     </queries>
 
     <application
+        android:name=".App"
         android:allowBackup="false"
         android:label="Health→Notion"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">

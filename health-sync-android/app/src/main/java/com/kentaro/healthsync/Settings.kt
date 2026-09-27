@@ -53,6 +53,11 @@ class Settings(context: Context) {
         get() = prefs.getString("last_log", "") ?: ""
         set(v) = prefs.edit().putString("last_log", v).apply()
 
+    /** 前回アプリが落ちたときのエラー内容（App.kt が保存する） */
+    var crashLog: String
+        get() = prefs.getString("crash_log", "") ?: ""
+        set(v) = prefs.edit().putString("crash_log", v).apply()
+
     fun carryOverList(): List<String> =
         carryOverProperties.split(',', '、').map { it.trim() }.filter { it.isNotEmpty() }
 
