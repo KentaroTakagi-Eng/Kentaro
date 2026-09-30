@@ -4,8 +4,8 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** 項目ごとの設定（転送するか / 書き込み先のNotion列名） */
-data class MetricSetting(val id: String, val enabled: Boolean, val property: String)
+/** 項目ごとの設定（転送するか / 書き込み先のNotion列名 / 使うアプリ。空欄ならヘルスコネクトの優先順位に任せる） */
+data class MetricSetting(val id: String, val enabled: Boolean, val property: String, val source: String = "")
 
 /** アプリの設定。すべて画面から変更でき、端末内に保存される。 */
 class Settings(context: Context) {
@@ -68,7 +68,8 @@ class Settings(context: Context) {
             val arr = JSONArray(prefs.getString("metrics", "[]"))
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                saved[o.getString("id")] = MetricSetting(o.getString("id"), o.getBoolean("enabled"), o.getString("property"))
+                saved[o.getString("id")] =
+                    MetricSetting(o.getString("id"), o.getBoolean("enabled"), o.getString("property"), o.optString("source"))
             }
         }
         return ALL_METRICS.map { saved[it.id] ?: MetricSetting(it.id, it.defaultEnabled, it.defaultProperty) }
@@ -77,7 +78,9 @@ class Settings(context: Context) {
     fun saveMetricSettings(list: List<MetricSetting>) {
         val arr = JSONArray()
         list.forEach {
-            arr.put(JSONObject().put("id", it.id).put("enabled", it.enabled).put("property", it.property.trim()))
+            arr.put(
+                JSONObject().put("id", it.id).put("enabled", it.enabled).put("property", it.property.trim()).put("source", it.source)
+            )
         }
         prefs.edit().putString("metrics", arr.toString()).apply()
     }

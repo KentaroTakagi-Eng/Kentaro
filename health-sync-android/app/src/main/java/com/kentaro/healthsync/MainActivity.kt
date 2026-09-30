@@ -1,5 +1,6 @@
 package com.kentaro.healthsync
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -28,10 +29,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -79,6 +82,9 @@ private fun SettingsScreen() {
     var busy by remember { mutableStateOf(false) }
     var grantedCount by remember { mutableStateOf(0) }
     var hcError by remember { mutableStateOf("") }
+    // 項目ID → (自動の値, アプリごとの値)
+    val breakdown = remember { mutableStateMapOf<String, Pair<Double?, List<Pair<String, Double?>>>>() }
+    var breakdownError by remember { mutableStateOf("") }
     var crashLog by remember { mutableStateOf(settings.crashLog) }
 
     val sdkStatus = remember { runCatching { HealthConnectClient.getSdkStatus(context) }.getOrDefault(HealthConnectClient.SDK_UNAVAILABLE) }
@@ -216,7 +222,50 @@ private fun SettingsScreen() {
                         label = { Text(def.label) }, singleLine = true, enabled = m.enabled,
                     )
                 }
+                if (m.enabled && m.source.isNotBlank()) {
+                    Text("　データ元: ${appLabel(context, m.source)} のみ", style = MaterialTheme.typography.bodySmall)
+                }
+                val b = breakdown[m.id]
+                if (m.enabled && b != null) {
+                    Column(Modifier.padding(start = 16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("自動（全アプリ）: ${formatValue(b.first)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                            TextButton(enabled = m.source.isNotBlank(), onClick = { metrics[i] = m.copy(source = "") }) {
+                                Text(if (m.source.isBlank()) "使用中" else "これを使う")
+                            }
+                        }
+                        b.second.forEach { (pkg, v) ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("${appLabel(context, pkg)}: ${formatValue(v)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                                TextButton(enabled = m.source != pkg, onClick = { metrics[i] = m.copy(source = pkg) }) {
+                                    Text(if (m.source == pkg) "使用中" else "これを使う")
+                                }
+                            }
+                        }
+                    }
+                }
             }
+            OutlinedButton(enabled = !busy && hcAvailable, onClick = {
+                busy = true
+                breakdownError = ""
+                scope.launch {
+                    val engine = SyncEngine(context)
+                    for (m in metrics.filter { it.enabled }) {
+                        val def = ALL_METRICS.first { it.id == m.id }
+                        try {
+                            breakdown[m.id] = engine.todayBreakdown(def)
+                        } catch (e: Exception) {
+                            breakdownError += "${def.label}: ${e.message}\n"
+                        }
+                    }
+                    busy = false
+                }
+            }) { Text("今日の値をアプリごとに確認") }
+            Text(
+                "値が他のアプリの表示と合わないときは、確認ボタンを押して、正しいアプリの「これを使う」を選び、保存して同期してください。",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (breakdownError.isNotEmpty()) Text(breakdownError, color = MaterialTheme.colorScheme.error)
         }
 
         // 4. 詳細
@@ -256,6 +305,18 @@ private fun SettingsScreen() {
         Spacer(Modifier.height(32.dp))
     }
 }
+
+private fun formatValue(v: Double?): String = when {
+    v == null -> "データなし"
+    v % 1.0 == 0.0 -> "%,d".format(v.toLong())
+    else -> v.toString()
+}
+
+/** パッケージ名をアプリ名にする（見つからなければパッケージ名のまま） */
+private fun appLabel(context: Context, pkg: String): String = runCatching {
+    val pm = context.packageManager
+    pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+}.getOrDefault(pkg)
 
 @Composable
 private fun Section(title: String, content: @Composable () -> Unit) {

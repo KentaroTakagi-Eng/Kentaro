@@ -16,6 +16,11 @@
 
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
+        <!-- データ元のアプリ名を表示するため -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application

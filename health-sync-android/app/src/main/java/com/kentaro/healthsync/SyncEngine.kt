@@ -2,6 +2,7 @@ package com.kentaro.healthsync
 
 import android.content.Context
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.records.metadata.DataOrigin
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -18,6 +19,8 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
+
+private data class Target(val def: MetricDef, val property: String, val origins: Set<DataOrigin>)
 
 /** ヘルスコネクトの値を読み、Notionの「その日の行」に書き込む */
 class SyncEngine(private val context: Context) {
@@ -43,7 +46,7 @@ class SyncEngine(private val context: Context) {
                 schema[s.property] != "number" -> {
                     log.appendLine("・${def.label}: Notionに数値列「${s.property}」がないためスキップ"); null
                 }
-                else -> def to s.property
+                else -> Target(def, s.property, if (s.source.isBlank()) emptySet() else setOf(DataOrigin(s.source)))
             }
         }
         if (targets.isEmpty()) {
@@ -61,8 +64,8 @@ class SyncEngine(private val context: Context) {
             val end = date.plusDays(1).atStartOfDay(zone).toInstant()
 
             val values = linkedMapOf<String, Double>()
-            for ((def, property) in targets) {
-                runCatching { def.read(hc, start, end) }
+            for ((def, property, origins) in targets) {
+                runCatching { def.read(hc, start, end, origins) }
                     .onSuccess { v -> if (v != null) values[property] = v }
                     .onFailure { log.appendLine("・${def.label}: 読み取り失敗 ${it.message}") }
             }
@@ -83,7 +86,7 @@ class SyncEngine(private val context: Context) {
                 notion.createPage(dbId, props)
                 log.appendLine("$date: 新規作成 ${describe(values)}")
             } else {
-                val cumulative = targets.filter { it.first.cumulative }.map { it.second }.toSet()
+                val cumulative = targets.filter { it.def.cumulative }.map { it.property }.toSet()
                 values.forEach { (k, v) ->
                     val current = NotionClient.numberOf(page, k)
                     val write = if (k in cumulative) current != v else settings.overwrite || current == null
@@ -102,6 +105,19 @@ class SyncEngine(private val context: Context) {
 
     private fun describe(values: Map<String, Double>) =
         values.entries.joinToString(" / ") { (k, v) -> "$k=${if (v % 1.0 == 0.0) v.toLong().toString() else v.toString()}" }
+
+    /** 今日の値を「自動（全アプリ）」と「アプリごと」に分けて返す。どのアプリの値を使うか選ぶための確認用 */
+    suspend fun todayBreakdown(def: MetricDef): Pair<Double?, List<Pair<String, Double?>>> = withContext(Dispatchers.IO) {
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        val start = today.atStartOfDay(zone).toInstant()
+        val end = today.plusDays(1).atStartOfDay(zone).toInstant()
+        val hc = HealthConnectClient.getOrCreate(context)
+        val auto = def.read(hc, start, end, emptySet())
+        // 睡眠は前日の夜から始まるので、アプリを探す範囲も1日広げる
+        val origins = def.origins(hc, start.minusSeconds(86400), end)
+        auto to origins.sorted().map { it to def.read(hc, start, end, setOf(DataOrigin(it))) }
+    }
 
     companion object {
         private const val WORK_NAME = "health-sync"
