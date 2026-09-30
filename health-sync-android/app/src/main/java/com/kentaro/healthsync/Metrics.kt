@@ -34,6 +34,8 @@ data class MetricDef(
     val defaultProperty: String,
     val defaultEnabled: Boolean,
     val recordType: KClass<out Record>,
+    /** 歩数など1日の中で増えていく値。「上書きしない」設定でも常に最新値に更新する */
+    val cumulative: Boolean = false,
     /** その日（start〜end）の値を1つ返す。データがなければ null。 */
     val read: suspend (HealthConnectClient, Instant, Instant) -> Double?,
 ) {
@@ -48,13 +50,13 @@ val ALL_METRICS: List<MetricDef> = listOf(
     MetricDef("body_fat", "体脂肪率 (%)", "体脂肪率", true, BodyFatRecord::class) { c, s, e ->
         latest<BodyFatRecord>(c, s, e)?.percentage?.value?.div(100)?.round(3)
     },
-    MetricDef("total_calories", "消費カロリー 合計 (kcal)", "消費カロリー", true, TotalCaloriesBurnedRecord::class) { c, s, e ->
+    MetricDef("total_calories", "消費カロリー 合計 (kcal)", "消費カロリー", true, TotalCaloriesBurnedRecord::class, cumulative = true) { c, s, e ->
         aggregate(c, TotalCaloriesBurnedRecord.ENERGY_TOTAL, s, e)?.inKilocalories?.round(0)
     },
-    MetricDef("active_calories", "活動カロリー (kcal)", "活動カロリー", false, ActiveCaloriesBurnedRecord::class) { c, s, e ->
+    MetricDef("active_calories", "活動カロリー (kcal)", "活動カロリー", false, ActiveCaloriesBurnedRecord::class, cumulative = true) { c, s, e ->
         aggregate(c, ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL, s, e)?.inKilocalories?.round(0)
     },
-    MetricDef("steps", "歩数", "歩数", true, StepsRecord::class) { c, s, e ->
+    MetricDef("steps", "歩数", "歩数", true, StepsRecord::class, cumulative = true) { c, s, e ->
         aggregate(c, StepsRecord.COUNT_TOTAL, s, e)?.toDouble()
     },
     MetricDef("bp_systolic", "血圧 上 (mmHg)", "血圧（上）", false, BloodPressureRecord::class) { c, s, e ->
@@ -67,8 +69,9 @@ val ALL_METRICS: List<MetricDef> = listOf(
         latest<RestingHeartRateRecord>(c, s, e)?.beatsPerMinute?.toDouble()
     },
     // その日に目覚めた睡眠の合計時間
-    MetricDef("sleep_hours", "睡眠時間 (時間)", "睡眠時間", false, SleepSessionRecord::class) { c, s, e ->
-        val sessions = c.readRecords(ReadRecordsRequest(SleepSessionRecord::class, TimeRangeFilter.between(s, e)))
+    MetricDef("sleep_hours", "睡眠時間 (時間)", "睡眠時間", false, SleepSessionRecord::class, cumulative = true) { c, s, e ->
+        // 前日の夜に寝始めた睡眠も拾うため、1日前から読んで「その日に目覚めた」ものだけ数える
+        val sessions = c.readRecords(ReadRecordsRequest(SleepSessionRecord::class, TimeRangeFilter.between(s.minus(Duration.ofDays(1)), e)))
             .records.filter { it.endTime >= s && it.endTime < e }
         if (sessions.isEmpty()) null
         else sessions.sumOf { Duration.between(it.startTime, it.endTime).toMinutes() }.div(60.0).round(1)

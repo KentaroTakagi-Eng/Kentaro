@@ -241,6 +241,7 @@ private fun SettingsScreen() {
                 Spacer(Modifier.padding(4.dp))
                 Text("Notionに値があっても上書きする")
             }
+            Text("歩数・消費カロリー・睡眠時間は1日の中で増えるため、この設定に関係なく常に最新値に更新します。", style = MaterialTheme.typography.bodySmall)
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

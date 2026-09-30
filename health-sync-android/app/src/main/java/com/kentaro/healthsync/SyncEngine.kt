@@ -83,11 +83,14 @@ class SyncEngine(private val context: Context) {
                 notion.createPage(dbId, props)
                 log.appendLine("$date: 新規作成 ${describe(values)}")
             } else {
+                val cumulative = targets.filter { it.first.cumulative }.map { it.second }.toSet()
                 values.forEach { (k, v) ->
-                    if (settings.overwrite || NotionClient.numberOf(page, k) == null) props.put(k, NotionClient.number(v))
+                    val current = NotionClient.numberOf(page, k)
+                    val write = if (k in cumulative) current != v else settings.overwrite || current == null
+                    if (write) props.put(k, NotionClient.number(v))
                 }
                 if (props.length() == 0) {
-                    log.appendLine("$date: 変更なし（上書きしない設定）")
+                    log.appendLine("$date: 変更なし")
                 } else {
                     notion.updatePage(page.getString("id"), props)
                     log.appendLine("$date: 更新 ${describe(values.filterKeys { props.has(it) })}")
